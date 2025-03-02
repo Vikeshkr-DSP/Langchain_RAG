@@ -1,5 +1,7 @@
+import os
+import time
 import streamlit as st
-from langchain_chroma import Chroma
+from langchain_community.vectorstores import FAISS
 from langchain_ollama import OllamaEmbeddings, ChatOllama
 from langchain.chains import create_history_aware_retriever, create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
@@ -9,6 +11,7 @@ from langchain_core.chat_history import BaseChatMessageHistory
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_core.runnables.history import RunnableWithMessageHistory
+
 
 ## Setting-up Streamlit
 st.title('RAG with PDF with message history')
@@ -25,26 +28,40 @@ if 'store' not in st.session_state:
     st.session_state.store = {}
 
 uploaded_files = st.file_uploader('Upload a PDF file', type='pdf', accept_multiple_files=True)
-print(uploaded_files)
 
 if uploaded_files:
 
-    document = []
-    for files in uploaded_files:
+    if 'last_uploaded_files' not in st.session_state or st.session_state.last_uploaded_files != uploaded_files:
+        st.session_state.last_uploaded_files = uploaded_files
 
-        temp_pdf = f'./temp.pdf'
-        with open(temp_pdf, 'wb') as file:
-            file.write(files.getvalue())
+        document = []
+        for files in uploaded_files:
+            temp_pdf = f'./temp.pdf'
+            with open(temp_pdf, 'wb') as file:
+                file.write(files.getvalue())
 
-        pdf_loader = PyPDFLoader(file_path=temp_pdf)
-        doc = pdf_loader.load()
-        document.extend(doc)
+            pdf_loader = PyPDFLoader(file_path=temp_pdf)
+            doc = pdf_loader.load()
+            document.extend(doc)
+            os.remove(temp_pdf)
 
-    splits = text_splitter.split_documents(documents=document)
-    vector_store = Chroma.from_documents(documents=splits, embedding=embedng_techn)
-    retriever = vector_store.as_retriever()
+        start_time = time.time()
+        st.session_state.splits = text_splitter.split_documents(documents=document)
+        st.session_state.vector_store = FAISS.from_documents(documents=st.session_state.splits, embedding=embedng_techn)
+        st.session_state.retriever = st.session_state.vector_store.as_retriever()
+        end_time = time.time()
+        print('Time taken for text split, data embedding and retriver creation: ', end_time - start_time)
 
-    ## Prompts required for the model
+    else:
+        print('Skipped ')
+
+
+## Tesing if the retriever is created
+if 'retriever' in st.session_state:
+
+    print('Started Retriever execution')
+
+    ## Prompt for creating a standalone user input if it refere to chat history context
     system_message = (
         "Given the chat history and current user question, which might refer to chat history context, "
         "formulate a standalone question which can be understood without the chat history."
@@ -59,11 +76,12 @@ if uploaded_files:
         ]
     )
 
-    history_aware_retriever = create_history_aware_retriever(model, retriever, chat_prompt)
+    history_aware_retriever = create_history_aware_retriever(model, st.session_state.retriever, chat_prompt)
 
+    ## Prompt for adjusting system response from the LLM
     system_prompt = (
         "You are assistant for question-answering task. Use the below retrived context to answer the user question."
-        "If you do not know the answer, just say that 'I son't know.'"
+        "If you do not know the answer, just say that 'I don't know.'"
         "Keep the answer concise and to the point"
         "{context}"
     )
@@ -103,6 +121,6 @@ if uploaded_files:
         )
 
         st.write(st.session_state.store)
-        st.write('Assistant', response['answer'])
-        st.write('Chat history', session_history.messages)
+        st.write('Assistant: ', response['answer'])
+        st.write('Chat history: ', session_history.messages)
 
