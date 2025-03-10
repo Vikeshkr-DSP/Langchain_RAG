@@ -23,26 +23,32 @@ model = ChatOllama(model='llama3.1', temperature=0.5)
 embedng_techn = OllamaEmbeddings(model='llama3.1')
 text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=100)
 
-## Declaring placeholder for chat history
+## Initialising placeholder for chat history, input key and file upload count
 if 'store' not in st.session_state:
     st.session_state.store = {}
+    st.session_state.input_key = "input_field"
+    st.session_state.file_upload_count = 0
+
 
 ## Uploading files for building context
 uploaded_files = st.sidebar.file_uploader('Upload your document to build the context', type='pdf', accept_multiple_files=False)
 
 ## creating vector space and retriever for the uploaded file
 if uploaded_files:
+    st.session_state.file_upload_count += 1
 
+    ## Checking for new file upload
     if 'last_uploaded_files' not in st.session_state or st.session_state.last_uploaded_files != uploaded_files.name:
         st.session_state.last_uploaded_files = uploaded_files.name
 
-        ## Deleting older vector space and retriever if a new file is uploaded
+        ## Deleting older vector space, retriever, user input and chat history if a new file is uploaded
         if 'retriever' in st.session_state:
-            ## Look for a way to reset user input element once a new file is uploaded
-            # del st.session_state.user_input
+            st.session_state.user_input = ''
+            st.session_state.input_key = f'{st.session_state.file_upload_count}_{st.session_state.user_input}'
             del st.session_state.splits
             del st.session_state.vector_store
             del st.session_state.retriever
+            st.session_state.chat_history.messages = []
  
         temp_pdf = f'./temp.pdf'
         with open(temp_pdf, 'wb') as file:
@@ -101,12 +107,11 @@ if 'retriever' in st.session_state:
         if session_id not in st.session_state.store:
             st.session_state.store[session_id] = ChatMessageHistory()
 
-        chat_history = st.session_state.store[session_id]
-        # print(chat_history)
-        if len(chat_history.messages) > 10:
-            chat_history.messages = chat_history.messages[-10:]
+        st.session_state.chat_history = st.session_state.store[session_id]
+        if len(st.session_state.chat_history.messages) > 10:
+            st.session_state.chat_history.messages = st.session_state.chat_history.messages[-10:]
 
-        return chat_history
+        return st.session_state.chat_history
 
     ## Runnable for chat continuation
     conversational_rag_chain = RunnableWithMessageHistory(
@@ -117,14 +122,14 @@ if 'retriever' in st.session_state:
         output_messages_key='answer'
     )
 
-    ## accepts user input
-    st.session_state.user_input = st.text_input(label='Ask your question regarding uploaded document.', key='User Input')
+    ## accepts user query
+    st.session_state.user_input = st.text_input(label='Ask your question regarding uploaded document.', key=st.session_state.input_key)
     if st.session_state.user_input:
         session_history = get_session_history(session_id)
         response = conversational_rag_chain.invoke(
             {
                 'input':st.session_state.user_input
-                },
+            },
             config={
                 'configurable':{'session_id':session_id}
             }
